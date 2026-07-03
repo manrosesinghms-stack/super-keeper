@@ -180,7 +180,7 @@ function baseState(){
     sub:'intro', subT:0, volley:null,
     glove:{x:GCX,y:GCY}, gloveTrail:[], dive:0, diveCd:0, keeperFlop:0, flopDir:1, saveGrin:0,
     parts:[], pops:[], ripples:[], deadBalls:[], fireworks:[],
-    hype:.3, hint:null, cards:null, pen:null, overLock:0, overT:0, grade:null, R:null, royaleResult:null,
+    hype:.3, hint:null, cards:null, pen:null, overLock:0, overT:0, grade:null, R:null, royaleResult:null, D:null, duelResult:null,
     wave:{on:false,x:0,shown:false}, duck:{t:-1,x:-60,quacked:false}, postShake:0,
     chantT:6, hbT:0, hbPulse:0,
     best:+(localStorage.getItem('sk_best')||0),
@@ -292,6 +292,7 @@ function endVolley(){
     else nextVolley();
     return;
   }
+  if(S.gameMode==='duel'){duelAfterDefend();return;}
   if(S.hp<=0){endRun();return;}
   if(S.shotIdx>=S.shotsTotal)endMatch();
   else nextVolley();
@@ -399,25 +400,113 @@ function royaleOver(won){
   sdkStop();
 }
 
+/* ---------- DUEL CUP (1v1 shootout ladder — the Stage-2 netcode-ready loop) ---------- */
+const DUEL_STAGES=['QUARTER-FINAL','SEMI-FINAL','THE FINAL'];
+const TAUNTS=['too easy.','my grandma dives better.','watch and learn.','is that all?','I eat penalties.'];
+function startDuel(){
+  S=Object.assign(baseState(),{mode:'play',gameMode:'duel',god:S.god,autopick:S.autopick,debugTs:S.debugTs});
+  const pool=BOT_NAMES.slice();
+  const rivals=[.58,.72,.88].map(sk=>({name:pool.splice(Math.floor(Math.random()*pool.length),1)[0],skill:sk}));
+  S.D={stage:0,rivals,round:1,myGoals:0,theirGoals:0,hist:[[],[]],sudden:false};
+  startDuelMatch();sdkStart();
+}
+function startDuelMatch(){
+  const D=S.D;
+  D.round=1;D.myGoals=0;D.theirGoals=0;D.hist=[[],[]];D.sudden=false;
+  S.matchIdx=3+D.stage*2;
+  S.nation=NATIONS[(D.stage*4+1)%NATIONS.length];paintCrowd(S.nation);
+  S.sub='intro';S.subT=0;S.volley=null;
+  sWhistle();
+}
+function duelRival(){return S.D.rivals[S.D.stage];}
+function duelDefend(){
+  S.shotIdx=S.D.round;S.shotsTotal=Math.max(5,S.D.round);
+  S.volley={prep:Math.max(.55,.9-.05*S.D.stage),balls:[makeBall(0,BALL_START.x)],launched:false,resolvedT:0};
+  S.sub='volley';S.subT=0;S.hint=null;
+}
+function duelAfterDefend(){
+  const b=S.volley.balls[0],D=S.D;
+  const goal=!b.saved&&!b.miss;
+  if(goal)D.theirGoals++;
+  D.hist[1].push(goal?1:0);
+  duelShoot();
+}
+function takeAimedShot(err){
+  const tx=clamp(S.pen.ret.x,GX0+20,GX1-20),ty=clamp(S.pen.ret.y,GY0+20,GY1-15);
+  const e=err!=null?err:Math.max(40,160-8*S.matchIdx);
+  S.pen.shot={t:0,tgt:{x:tx,y:ty}};
+  S.pen.guess={x:clamp(tx+rnd(-e,e),GX0+40,GX1-40),y:clamp(ty+rnd(-e*.6,e*.6),GY0+30,GY1-20)};
+  S.pen.phase='shot';sKick();
+}
+function duelShoot(){
+  const D=S.D,rv=duelRival();
+  S.sub='dshoot';S.subT=0;
+  S.pen={phase:'aim',t:0,ret:{x:GCX,y:GCY},shot:null,guess:null,result:'',
+    err:Math.max(46,170-120*rv.skill+(D.sudden?D.round*4:0)),
+    label:'YOUR SHOT vs '+rv.name+' — CLICK TO SHOOT!',
+    info:'Round '+D.round+(D.sudden?' — SUDDEN DEATH':' of 5')};
+  if(Math.random()<.4)pop(GCX,120,rv.name+': "'+pick(TAUNTS)+'"','rgba(226,232,240,.85)',16);
+}
+function updateDuelShot(dt){
+  const P=S.pen;if(!P)return;P.t+=dt;
+  if(P.phase==='aim'){
+    P.ret.x=GCX+Math.sin(P.t*2.3)*250;P.ret.y=GCY+Math.sin(P.t*3.6)*105;
+    if(S.autopick&&P.t>1)takeAimedShot(P.err);
+  }else if(P.phase==='shot'){
+    P.shot.t+=dt/.5;
+    if(P.shot.t>=1){
+      const saved=dist(P.guess,P.shot.tgt)<75;
+      P.savedFlag=saved;
+      P.result=saved?'SAVED BY '+duelRival().name:'GOOOAL!';
+      if(saved){sSave();pop(GCX,300,'DENIED!','#f87171',34);}
+      else{S.score+=150;roar(.6);pop(GCX,300,'GOAL! +150','#4ade80',36);burst(P.shot.tgt.x,P.shot.tgt.y,20,['#4ade80','#fff'],380);}
+      P.phase='done';P.t=0;
+    }
+  }else if(P.phase==='done'&&P.t>1.0){duelAfterShoot(P.savedFlag);}
+}
+function duelAfterShoot(saved){
+  const D=S.D;
+  if(!saved)D.myGoals++;
+  D.hist[0].push(saved?0:1);
+  if(D.round>=5&&D.myGoals!==D.theirGoals){duelDecide();return;}
+  if(D.round>=5)D.sudden=true;
+  D.round++;
+  S.sub='intro2';S.subT=0;
+}
+function duelDecide(){
+  const D=S.D;
+  if(D.myGoals>D.theirGoals){
+    if(D.stage>=2){duelOver(true);return;}
+    D.stage++;
+    pop(GCX,260,'YOU ADVANCE!','#4ade80',40);confetti();sFanfare();sdkHappy();
+    S.score+=500;
+    startDuelMatch();
+  }else duelOver(false);
+}
+function duelOver(won){
+  S.mode='over';S.overLock=.8;S.overT=0;
+  S.duelResult={won,stage:S.D.stage};
+  if(won){confetti();fireworksShow();sFanfare();sdkHappy();}
+  else sGoal();
+  sdkStop();
+}
+
 /* ---------- input ---------- */
 function onDown(){
   if(S.mode==='title'){
-    if(PT.x>GCX-270&&PT.x<GCX-10&&PT.y>408&&PT.y<466){startRun();return;}
-    if(PT.x>GCX+10&&PT.x<GCX+270&&PT.y>408&&PT.y<466){startRoyale();return;}
+    if(PT.y>408&&PT.y<466){
+      if(PT.x>GCX-310&&PT.x<GCX-110){startRun();return;}
+      if(PT.x>GCX-100&&PT.x<GCX+100){startRoyale();return;}
+      if(PT.x>GCX+110&&PT.x<GCX+310){startDuel();return;}
+    }
     return;
   }
-  if(S.mode==='over'){if(S.overLock<=0){if(S.gameMode==='royale')startRoyale();else startRun();}return;}
+  if(S.mode==='over'){if(S.overLock<=0){if(S.gameMode==='royale')startRoyale();else if(S.gameMode==='duel')startDuel();else startRun();}return;}
   if(S.mode==='pick'){const c=cardAt(PT.x,PT.y);if(c!=null)applyMut(S.cards[c]);return;}
-  if(S.mode==='penalty'&&S.pen.phase==='aim'){
-    const tx=clamp(S.pen.ret.x,GX0+20,GX1-20),ty=clamp(S.pen.ret.y,GY0+20,GY1-15);
-    const err=Math.max(40,160-8*S.matchIdx);
-    S.pen.shot={t:0,tgt:{x:tx,y:ty}};
-    S.pen.guess={x:clamp(tx+rnd(-err,err),GX0+40,GX1-40),y:clamp(ty+rnd(-err*.6,err*.6),GY0+30,GY1-20)};
-    S.pen.phase='shot';sKick();
-    return;
-  }
+  if(S.mode==='penalty'&&S.pen.phase==='aim'){takeAimedShot();return;}
   if(S.mode==='play'){
     if(S.sub==='relim'){advanceRelim();return;}
+    if(S.sub==='dshoot'){if(S.pen&&S.pen.phase==='aim')takeAimedShot(S.pen.err);return;}
     if(S.diveCd<=0){S.dive=.22;S.diveCd=.8;grassKick(clamp(S.glove.x,GX0+70,GX1-70),GY1+8);}
   }
 }
@@ -500,7 +589,9 @@ function ballPos(b){
 function updatePlay(dt){
   updateKeeper(dt);
   S.subT+=dt;
-  if(S.sub==='intro'){if(S.subT>1.3)nextVolley();return;}
+  if(S.sub==='intro'){if(S.subT>1.3){if(S.gameMode==='duel')duelDefend();else nextVolley();}return;}
+  if(S.sub==='intro2'){if(S.subT>.8)duelDefend();return;}
+  if(S.sub==='dshoot'){updateDuelShot(dt);return;}
   if(S.sub==='matchend'){if(S.subT>1.5)afterMatch();return;}
   if(S.sub==='relim'){if(S.autopick&&S.subT>.5)advanceRelim();return;}
   if(S.sub==='dead')return;
@@ -567,7 +658,8 @@ function draw(){
   else{
     if(S.mode==='play'||S.mode==='penalty'){
       drawGoal();
-      if(S.mode==='play'){drawShooter();drawKeeper();drawBalls();drawHint();}
+      if(S.mode==='play'&&S.sub==='dshoot')drawPenalty();
+      else if(S.mode==='play'){drawShooter();drawKeeper();drawBalls();drawHint();}
       else drawPenalty();
     }
     drawDuck();
@@ -871,8 +963,8 @@ function drawPenalty(){
     ctx.beginPath();ctx.arc(P.ret.x,P.ret.y,20,0,7);ctx.stroke();
     ctx.beginPath();ctx.moveTo(P.ret.x-30,P.ret.y);ctx.lineTo(P.ret.x+30,P.ret.y);ctx.moveTo(P.ret.x,P.ret.y-30);ctx.lineTo(P.ret.x,P.ret.y+30);ctx.stroke();
     ctx.fillStyle='#e2e8f0';ctx.font='bold 26px Arial';ctx.textAlign='center';
-    ctx.fillText('PENALTY BREAK — CLICK TO SHOOT!',GCX,520);
-    ctx.font='16px Arial';ctx.fillStyle='#94a3b8';ctx.fillText('Score to win +1 heart and +300',GCX,548);
+    ctx.fillText(S.pen.label||'PENALTY BREAK — CLICK TO SHOOT!',GCX,520);
+    ctx.font='16px Arial';ctx.fillStyle='#94a3b8';ctx.fillText(S.pen.info||'Score to win +1 heart and +300',GCX,548);
   }else if(P.phase==='shot'){
     const t=clamp(P.shot.t,0,1);
     const x=lerp(BALL_START.x,P.shot.tgt.x,t),y=lerp(BALL_START.y,P.shot.tgt.y,t)-Math.sin(t*Math.PI)*50;
@@ -908,6 +1000,10 @@ function drawHUD(){
     ctx.fillStyle='rgba(2,6,16,.5)';rr(10,12,250,32,9);ctx.fill();
     ctx.textAlign='left';ctx.fillStyle='#fb7185';ctx.font='bold 15px Arial';
     ctx.fillText((S.R.round<4?'ROUND '+S.R.round+'/4':'THE FINAL')+'  •  SHOT '+Math.min(S.shotIdx,S.shotsTotal)+'/'+S.shotsTotal,22,33);
+  }else if(S.gameMode==='duel'&&S.D){
+    ctx.fillStyle='rgba(2,6,16,.5)';rr(10,12,330,32,9);ctx.fill();
+    ctx.textAlign='left';ctx.fillStyle='#facc15';ctx.font='bold 15px Arial';
+    ctx.fillText(DUEL_STAGES[S.D.stage]+'  •  YOU '+S.D.myGoals+' — '+S.D.theirGoals+' '+duelRival().name,22,33);
   }else{
     // hearts panel
     ctx.fillStyle='rgba(2,6,16,.5)';rr(10,12,150,32,9);ctx.fill();
@@ -931,6 +1027,25 @@ function drawHUD(){
     ctx.fillText('MATCH '+S.matchIdx+' vs '+S.nation.n+'  •  SHOT '+Math.min(S.shotIdx,S.shotsTotal)+'/'+S.shotsTotal,940,33);
   }
   if(S.mode==='play'&&S.gameMode==='royale'&&S.R)drawBoard();
+  if(S.mode==='play'&&S.gameMode==='duel'&&S.D)drawDots();
+}
+function drawDots(){
+  const D=S.D;
+  const row=(hist,y,label,col)=>{
+    ctx.textAlign='right';ctx.font='bold 12px Arial';ctx.fillStyle='#94a3b8';ctx.fillText(label,GCX-76,y+4);
+    const n=Math.max(5,hist.length);
+    for(let i=0;i<n;i++){
+      const x=GCX-60+i*24;
+      if(i<hist.length){
+        ctx.fillStyle=hist[i]?col:'rgba(148,163,184,.35)';
+        ctx.beginPath();ctx.arc(x,y,7,0,7);ctx.fill();
+        if(!hist[i]){ctx.strokeStyle='#0f172a';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x-4,y-4);ctx.lineTo(x+4,y+4);ctx.moveTo(x+4,y-4);ctx.lineTo(x-4,y+4);ctx.stroke();}
+      }else{ctx.strokeStyle='rgba(148,163,184,.4)';ctx.lineWidth=2;ctx.beginPath();ctx.arc(x,y,7,0,7);ctx.stroke();}
+    }
+  };
+  row(D.hist[0],76,'YOU','#4ade80');
+  row(D.hist[1],98,duelRival().name.slice(0,10),'#f87171');
+  ctx.textAlign='left';
 }
 function drawBoard(){
   const rows=S.R.players.slice().sort((a,b)=>(b.alive-a.alive)||(b.pts-a.pts));
@@ -973,6 +1088,14 @@ function drawRelim(){
 function drawIntro(){
   ctx.fillStyle='rgba(2,6,16,.74)';ctx.fillRect(0,0,W,H);
   ctx.textAlign='center';
+  if(S.gameMode==='duel'&&S.D){
+    const rv=duelRival();
+    ctx.fillStyle='#facc15';ctx.font='bold 22px Arial';ctx.fillText('DUEL CUP — '+DUEL_STAGES[S.D.stage],GCX,205);
+    ctx.fillStyle='#f8fafc';ctx.font='italic bold 56px Arial';ctx.fillText('YOU  vs  '+rv.name,GCX,272);
+    ctx.fillStyle='#e2e8f0';ctx.font='bold 18px Arial';ctx.fillText('BEST OF 5 — DEFEND THEIR SHOT, THEN STRIKE BACK',GCX,312);
+    ctx.fillStyle='#94a3b8';ctx.font='15px Arial';ctx.fillText('Rival skill: '+Math.round(rv.skill*100),GCX,344);
+    return;
+  }
   if(S.gameMode==='royale'&&S.R){
     const alive=S.R.players.filter(p=>p.alive).length;
     ctx.fillStyle='#fb7185';ctx.font='bold 22px Arial';ctx.fillText('PENALTY ROYALE',GCX,205);
@@ -1031,22 +1154,20 @@ function drawTitle(){
   ctx.fillStyle='#22d3ee';ctx.font='bold 19px Arial';
   ctx.fillText('SAVE EVERYTHING. PICK YOUR CHAOS. BECOME THE WALL.',GCX,352);
   // mode buttons
-  const hovS=PT.x>GCX-270&&PT.x<GCX-10&&PT.y>408&&PT.y<466;
-  const hovR=PT.x>GCX+10&&PT.x<GCX+270&&PT.y>408&&PT.y<466;
-  const pk=1+Math.sin(S.t*4)*.03;
-  ctx.save();ctx.translate(GCX-140,437);ctx.scale(hovS?1.06:pk,hovS?1.06:pk);
-  ctx.fillStyle='#facc15';rr(-130,-29,260,58,29);ctx.fill();
-  ctx.strokeStyle='#fff';ctx.lineWidth=3;rr(-130,-29,260,58,29);ctx.stroke();
-  ctx.fillStyle='#0f172a';ctx.font='bold 24px Arial';ctx.fillText('SOLO RUN',0,2);
-  ctx.font='bold 11px Arial';ctx.fillText('ROGUELIKE GAUNTLET',0,20);
-  ctx.restore();
-  ctx.save();ctx.translate(GCX+140,437);ctx.scale(hovR?1.06:pk,hovR?1.06:pk);
-  ctx.fillStyle='#e11d48';rr(-130,-29,260,58,29);ctx.fill();
-  ctx.strokeStyle='#fff';ctx.lineWidth=3;rr(-130,-29,260,58,29);ctx.stroke();
-  ctx.fillStyle='#fff';ctx.font='bold 24px Arial';ctx.fillText('PENALTY ROYALE',0,2);
-  ctx.fillStyle=Math.sin(S.t*6)>0?'#fde047':'#fff';ctx.font='bold 11px Arial';ctx.fillText('● LIVE — 8 KEEPERS, 1 CROWN',0,20);
-  ctx.restore();
-  ctx.fillStyle='#94a3b8';ctx.font='15px Arial';
+  const hv=PT.y>408&&PT.y<466;
+  const btn=(cx,label,sub,bg,fg,hov)=>{
+    ctx.save();ctx.translate(cx,437);
+    const k=hov?1.07:1+Math.sin(S.t*4)*.025;ctx.scale(k,k);
+    ctx.fillStyle=bg;rr(-100,-29,200,58,24);ctx.fill();
+    ctx.strokeStyle='#fff';ctx.lineWidth=3;rr(-100,-29,200,58,24);ctx.stroke();
+    ctx.fillStyle=fg;ctx.font='bold 19px Arial';ctx.textAlign='center';ctx.fillText(label,0,0);
+    ctx.font='bold 10px Arial';ctx.fillText(sub,0,19);
+    ctx.restore();
+  };
+  btn(GCX-210,'SOLO RUN','ROGUELIKE GAUNTLET','#facc15','#0f172a',hv&&PT.x>GCX-310&&PT.x<GCX-110);
+  btn(GCX,'PENALTY ROYALE',(Math.sin(S.t*6)>0?'● ':'○ ')+'LIVE — 8 KEEPERS','#e11d48','#fff',hv&&PT.x>GCX-100&&PT.x<GCX+100);
+  btn(GCX+210,'DUEL CUP','1v1 SHOOTOUT LADDER','#7c3aed','#fff',hv&&PT.x>GCX+110&&PT.x<GCX+310);
+  ctx.fillStyle='#94a3b8';ctx.font='15px Arial';ctx.textAlign='center';
   ctx.fillText('MOVE = GLOVE   •   CLICK = DIVE',GCX,498);
   if(S.best>0){
     ctx.fillStyle='rgba(2,6,16,.5)';rr(GCX-90,510,180,30,9);ctx.fill();
@@ -1072,6 +1193,22 @@ function drawTrophy(x,y,s){
 function drawOver(){
   ctx.fillStyle='rgba(2,6,16,.7)';ctx.fillRect(0,0,W,H);
   ctx.textAlign='center';
+  if(S.gameMode==='duel'&&S.duelResult){
+    const r=S.duelResult;
+    if(r.won){
+      if(Math.random()<.04)fireworksShow();
+      drawTrophy(GCX,250,150);
+      ctx.fillStyle='#facc15';ctx.font='italic bold 56px Arial';ctx.fillText('DUEL CUP CHAMPION!',GCX,330);
+      ctx.fillStyle='#e2e8f0';ctx.font='bold 19px Arial';ctx.fillText('THREE RIVALS. THREE FUNERALS.',GCX,366);
+    }else{
+      ctx.fillStyle='#f87171';ctx.font='italic bold 56px Arial';ctx.fillText('DEFEATED',GCX,240);
+      ctx.fillStyle='#e2e8f0';ctx.font='bold 26px Arial';ctx.fillText('KNOCKED OUT IN THE '+DUEL_STAGES[r.stage],GCX,292);
+      ctx.fillStyle='#94a3b8';ctx.font='17px Arial';ctx.fillText('The crown was three saves away.',GCX,328);
+    }
+    ctx.fillStyle='#f8fafc';ctx.font='bold 34px Arial';ctx.fillText(Math.round(S.score)+' pts',GCX,430);
+    if(S.overLock<=0&&Math.sin(S.t*4)>-.3){ctx.fillStyle='#4ade80';ctx.font='bold 26px Arial';ctx.fillText('CLICK FOR REMATCH',GCX,520);}
+    return;
+  }
   if(S.gameMode==='royale'&&S.royaleResult){
     const r=S.royaleResult;
     if(r.won){
@@ -1133,9 +1270,10 @@ setInterval(()=>{if(document.hidden)step(performance.now());},33);
 
 /* ---------- debug hooks ---------- */
 window.__sk={
-  info:()=>({mode:S.mode,sub:S.sub,gameMode:S.gameMode,match:S.matchIdx,round:S.R?S.R.round:0,place:S.royaleResult?S.royaleResult.place:0,score:Math.round(S.score),hp:S.hp,streak:S.streak,saves:S.saves,shot:S.shotIdx+'/'+S.shotsTotal,chaos:S.chaos,best:S.best}),
+  info:()=>({mode:S.mode,sub:S.sub,gameMode:S.gameMode,match:S.matchIdx,round:S.R?S.R.round:0,place:S.royaleResult?S.royaleResult.place:0,duel:S.D?{stage:S.D.stage,my:S.D.myGoals,their:S.D.theirGoals,round:S.D.round,won:S.duelResult?S.duelResult.won:null}:0,score:Math.round(S.score),hp:S.hp,streak:S.streak,saves:S.saves,shot:S.shotIdx+'/'+S.shotsTotal,chaos:S.chaos,best:S.best}),
   start:()=>{if(S.mode==='title'||S.mode==='over'){S.overLock=0;startRun();}},
   royale:()=>{if(S.mode==='title'||S.mode==='over'){S.overLock=0;startRoyale();}},
+  duel:()=>{if(S.mode==='title'||S.mode==='over'){S.overLock=0;startDuel();}},
   god:v=>{S.god=!!v;},
   autopick:v=>{S.autopick=!!v;},
   speed:v=>{S.debugTs=+v||1;},

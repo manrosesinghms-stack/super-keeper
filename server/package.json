@@ -1,0 +1,13 @@
+{
+  "name": "super-keeper-duel-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Stage 2 WebSocket room server for Super Keeper 1v1 duels (not used by the shipped build yet)",
+  "main": "duel-server.js",
+  "scripts": {
+    "start": "node duel-server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

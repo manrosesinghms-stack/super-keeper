@@ -8,8 +8,10 @@ Goal: live on CrazyGames **before the World Cup final (~July 19, 2026)** to catc
 - [x] Solo roguelike: escalating nations, 10 mutations (5 GIFT / 5 CHAOS + score mult), Penalty Breaks, hearts, clean sheets, grades
 - [x] Art pass: floodlit night stadium, living crowd (wave, flags, phone flashes), ball-tracking keeper eyes, golden balls, hit-stop, fireworks, duck
 - [x] PENALTY ROYALE: 8-keeper knockout, live leaderboard, eliminations, champion trophy (local rivals)
+- [x] DUEL CUP: 1v1 best-of-5 shootout ladder (quarter/semi/final) — defend their shot, then strike back; sudden death; rival taunts. This is the exact loop real netcode drops into later.
+- [x] Stage-2 server scaffold in `server/duel-server.js` (Node ws rooms, server-judged saves) — ready to deploy, not used by the shipped build
 - [x] CrazyGames SDK v3 wired (gameplayStart/Stop, rate-limited happytime)
-- [x] Verified end-to-end via `__sk` debug hooks (solo → game over; royale → champion)
+- [x] Verified end-to-end via `__sk` debug hooks (solo → game over; royale → champion; duel → cup won incl. sudden death)
 
 ## Phase 1 — SHIP THIS WEEK 🚢
 
@@ -32,8 +34,8 @@ The remaining work is **not code**:
 
 ## Phase 3 — Real multiplayer (only if Phase 2 metrics are strong)
 
-- [ ] 1v1 DUEL mode: alternating shoot/save, best of 5 (shoot mechanic already exists in Penalty Break)
-- [ ] Node + WebSocket room server on Fly/Railway (~$0–7/mo), rooms of 2, server-authoritative shot timing
+- [x] 1v1 DUEL gameplay loop — shipped as DUEL CUP vs AI rivals; netcode swaps in behind the same state machine
+- [ ] Deploy `server/duel-server.js` to Fly/Railway (~$0–7/mo, needs your account), point client at the WSS URL, replace `duelRival()` AI with socket messages
 - [ ] CrazyGames SDK **invite links** so friends join a room directly
 - [ ] Swap Royale bots for real players when concurrent traffic supports matchmaking; keep bots as backfill (players never see an empty lobby)
 - [ ] Teams/2v2 only after duels prove out
