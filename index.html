@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>SUPER KEEPER — Save Everything</title>
+<meta name="description" content="Save everything. One-hand goalkeeper roguelike: chaos mutations, Penalty Royale vs 7 rivals, 1v1 Duel Cup. Become the wall.">
+<meta name="theme-color" content="#0b1026">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><circle cx='32' cy='36' r='24' fill='%23f59e0b' stroke='white' stroke-width='4'/><circle cx='16' cy='20' r='8' fill='%23f59e0b' stroke='white' stroke-width='3'/><circle cx='32' cy='14' r='8' fill='%23f59e0b' stroke='white' stroke-width='3'/><circle cx='48' cy='20' r='8' fill='%23f59e0b' stroke='white' stroke-width='3'/></svg>">
 <script src="https://sdk.crazygames.com/crazygames-sdk-v3.js"></script>
 <style>
   html,body{margin:0;padding:0;height:100%;background:#04050c;overflow:hidden}
@@ -52,23 +55,29 @@ function drawHeart(x,y,s,col,stroke){
 /* ---------- CrazyGames SDK (guarded) ---------- */
 let SDKOK=false;
 addEventListener('load',async()=>{try{if(window.CrazyGames&&window.CrazyGames.SDK){await window.CrazyGames.SDK.init();SDKOK=true;}}catch(e){}});
-const sdkStart=()=>{try{SDKOK&&window.CrazyGames.SDK.game.gameplayStart()}catch(e){}};
-const sdkStop =()=>{try{SDKOK&&window.CrazyGames.SDK.game.gameplayStop()}catch(e){}};
+let lastGp=0;
+const sdkStart=()=>{const n=Date.now();if(n-lastGp<1500)return;lastGp=n;try{SDKOK&&window.CrazyGames.SDK.game.gameplayStart()}catch(e){}};
+const sdkStop =()=>{const n=Date.now();if(n-lastGp<1500)return;lastGp=n;try{SDKOK&&window.CrazyGames.SDK.game.gameplayStop()}catch(e){}};
 let lastHappy=0;
 const sdkHappy=()=>{const n=Date.now();if(n-lastHappy<15000)return;lastHappy=n;try{SDKOK&&window.CrazyGames.SDK.game.happytime()}catch(e){}};
 
 /* ---------- audio (synth, lazy) ---------- */
-let AC=null,crowdG=null,crowdBase=.03;
+let AC=null,crowdG=null,crowdBase=.03,SFXG=null,MUSG=null;
+let MUTE=+(localStorage.getItem('sk_mute')||0); // 0=all on, 1=music off, 2=all off
+function applyMute(){try{if(SFXG)SFXG.gain.value=MUTE===2?0:1;if(MUSG)MUSG.gain.value=MUTE>=1?0:.9;}catch(e){}}
 function audioInit(){
   if(AC)return;
   try{
     AC=new (window.AudioContext||window.webkitAudioContext)();
+    SFXG=AC.createGain();SFXG.connect(AC.destination);
+    MUSG=AC.createGain();MUSG.connect(AC.destination);
     const len=2*AC.sampleRate,buf=AC.createBuffer(1,len,AC.sampleRate),d=buf.getChannelData(0);
     for(let i=0;i<len;i++)d[i]=Math.random()*2-1;
     const src=AC.createBufferSource();src.buffer=buf;src.loop=true;
     const f=AC.createBiquadFilter();f.type='lowpass';f.frequency.value=420;
     crowdG=AC.createGain();crowdG.gain.value=crowdBase;
-    src.connect(f);f.connect(crowdG);crowdG.connect(AC.destination);src.start();
+    src.connect(f);f.connect(crowdG);crowdG.connect(SFXG);src.start();
+    applyMute();
   }catch(e){AC=null;}
 }
 function tone(freq,dur,type,vol,slide){
@@ -78,7 +87,7 @@ function tone(freq,dur,type,vol,slide){
     o.type=type||'sine';o.frequency.value=freq;
     if(slide)o.frequency.exponentialRampToValueAtTime(Math.max(30,slide),AC.currentTime+dur);
     g.gain.value=vol||.15;g.gain.exponentialRampToValueAtTime(.001,AC.currentTime+dur);
-    o.connect(g);g.connect(AC.destination);o.start();o.stop(AC.currentTime+dur);
+    o.connect(g);g.connect(SFXG||AC.destination);o.start();o.stop(AC.currentTime+dur);
   }catch(e){}
 }
 function noiseHit(f0,dur,vol){
@@ -89,8 +98,37 @@ function noiseHit(f0,dur,vol){
     const s=AC.createBufferSource();s.buffer=buf;
     const f=AC.createBiquadFilter();f.type='bandpass';f.frequency.value=f0;
     const g=AC.createGain();g.gain.value=vol||.3;
-    s.connect(f);f.connect(g);g.connect(AC.destination);s.start();
+    s.connect(f);f.connect(g);g.connect(SFXG||AC.destination);s.start();
   }catch(e){}
+}
+/* ---------- music: 16-step A-minor groove, scheduled on the audio clock ---------- */
+const mf=m=>440*Math.pow(2,(m-69)/12);
+const MBASS=[45,0,45,0,48,0,43,0,45,0,45,0,50,0,48,43];
+const ARP=[69,72,76,79,76,72,81,79];
+let mNext=0,mStep=0;
+function musNote(freq,t,dur,type,vol,slideTo){
+  if(!AC||!MUSG)return;
+  try{
+    const o=AC.createOscillator(),g=AC.createGain();
+    o.type=type;o.frequency.setValueAtTime(freq,t);
+    if(slideTo)o.frequency.exponentialRampToValueAtTime(Math.max(25,slideTo),t+dur);
+    g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(vol,t+.01);g.gain.exponentialRampToValueAtTime(.001,t+dur);
+    o.connect(g);g.connect(MUSG);o.start(t);o.stop(t+dur+.02);
+  }catch(e){}
+}
+function musicTick(){
+  if(!AC||MUTE>=1||AC.state!=='running')return;
+  const spb=.268;
+  if(mNext<AC.currentTime-1)mNext=AC.currentTime+.05; // resync after suspend
+  while(mNext<AC.currentTime+.25){
+    const s=mStep,t=mNext;
+    const inPlay=(S.mode==='play'||S.mode==='penalty')&&!S.paused;
+    const b=MBASS[s];if(b)musNote(mf(b),t,.24,'triangle',inPlay?.14:.09);
+    if(inPlay&&s%4===0)musNote(120,t,.11,'sine',.42,45);           // kick
+    if(inPlay&&s%2===1)musNote(6200,t,.03,'square',.025);          // hat
+    if(s%2===0)musNote(mf(ARP[(s/2)%ARP.length]),t,.2,'triangle',inPlay?.045:.065);
+    mStep=(mStep+1)%16;mNext+=spb;
+  }
 }
 function roar(k){ // crowd swells
   if(!AC||!crowdG)return;
@@ -117,6 +155,16 @@ const PT={x:W/2,y:GCY};
 function toXY(e){const r=cv.getBoundingClientRect();return{x:(e.clientX-r.left)/r.width*W,y:(e.clientY-r.top)/r.height*H};}
 cv.addEventListener('pointermove',e=>{const p=toXY(e);PT.x=p.x;PT.y=p.y;});
 cv.addEventListener('pointerdown',e=>{const p=toXY(e);PT.x=p.x;PT.y=p.y;audioInit();onDown();e.preventDefault();},{passive:false});
+cv.addEventListener('contextmenu',e=>e.preventDefault());
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden){
+    if(AC)try{AC.suspend();}catch(e){}
+    if(S.mode==='play'||S.mode==='penalty')S.paused=true; // don't lose runs to tab switches
+  }else if(AC)try{AC.resume();}catch(e){}
+});
+addEventListener('keydown',e=>{
+  if((e.key==='p'||e.key==='P'||e.key==='Escape')&&(S.mode==='play'||S.mode==='penalty'))S.paused=!S.paused;
+});
 
 /* ---------- data ---------- */
 const NATIONS=[
@@ -169,7 +217,7 @@ function paintCrowd(nat){
 let S=null;
 function baseState(){
   return {
-    mode:'title', gameMode:'solo', t:0, ts:1, debugTs:1,
+    mode:'title', gameMode:'solo', paused:false, t:0, ts:1, debugTs:1,
     shake:0, flash:0, flashCol:'255,60,60', freeze:0, punch:0, punchX:GCX, punchY:GCY,
     god:false, autopick:false,
     score:0, dispScore:0, mult:1, hp:3, streak:0, saves:0, conceded:0, matchIdx:0,
@@ -272,7 +320,7 @@ function resolveBall(b){
     S.freeze=Math.max(S.freeze,.07);S.punch=1;S.punchX=end.x;S.punchY=end.y;
     S.saveGrin=1;
     sSave();roar(isSuper?1:.5);S.shake=Math.max(S.shake,5);
-    if(S.streak%5===0){sdkHappy();pop(GCX,GY0-40,'STREAK x'+S.streak+' 🔥','#fb923c',30);}
+    if(S.streak%5===0){sdkHappy();pop(GCX,GY0-40,'STREAK x'+S.streak+' 🔥','#fb923c',30);tone(300,.35,'sawtooth',.1,900);}
   }else{
     S.conceded++;S.matchConceded++;if(S.gameMode==='solo')S.hp--;S.streak=0;S.hype=Math.max(.15,S.hype-.2);
     S.wave.on=false;S.wave.shown=false;
@@ -493,6 +541,11 @@ function duelOver(won){
 
 /* ---------- input ---------- */
 function onDown(){
+  if(Math.hypot(PT.x-(W-30),PT.y-(H-26))<20){ // sound toggle (all screens)
+    MUTE=(MUTE+1)%3;try{localStorage.setItem('sk_mute',MUTE);}catch(e){}
+    applyMute();sPickUI();return;
+  }
+  if(S.paused){S.paused=false;return;}
   if(S.mode==='title'){
     if(PT.y>408&&PT.y<466){
       if(PT.x>GCX-310&&PT.x<GCX-110){startRun();return;}
@@ -507,13 +560,14 @@ function onDown(){
   if(S.mode==='play'){
     if(S.sub==='relim'){advanceRelim();return;}
     if(S.sub==='dshoot'){if(S.pen&&S.pen.phase==='aim')takeAimedShot(S.pen.err);return;}
-    if(S.diveCd<=0){S.dive=.22;S.diveCd=.8;grassKick(clamp(S.glove.x,GX0+70,GX1-70),GY1+8);}
+    if(S.diveCd<=0){S.dive=.22;S.diveCd=.8;grassKick(clamp(S.glove.x,GX0+70,GX1-70),GY1+8);noiseHit(500,.12,.22);}
   }
 }
 function cardAt(x,y){for(let i=0;i<3;i++){const cx=80+i*280;if(x>=cx&&x<=cx+240&&y>=150&&y<=450)return i;}return null;}
 
 /* ---------- update ---------- */
 function update(dt){
+  if(S.paused)return;
   S.t+=dt;
   S.shake=Math.max(0,S.shake-dt*30);
   S.flash=Math.max(0,S.flash-dt*1.6);
@@ -597,14 +651,19 @@ function updatePlay(dt){
   if(S.sub==='dead')return;
   if(S.sub!=='volley'||!S.volley)return;
   const V=S.volley;
-  if(V.prep>0){V.prep-=dt;if(V.prep<=0){V.balls.forEach(b=>{b.t=-b.delay/b.ft;});sKick();V.launched=true;}return;}
+  if(V.prep>0){
+    V.prep-=dt;
+    if(!V.tick&&V.prep<.3){V.tick=true;tone(1300,.04,'square',.05);}
+    if(V.prep<=0){V.balls.forEach(b=>{b.t=-b.delay/b.ft;});sKick();V.launched=true;}
+    return;
+  }
   let allDone=true,slow=false;
   for(const b of V.balls){
     if(b.resolved)continue;
     allDone=false;
     b.t+=dt/b.ft;
     if(b.t<0)continue;
-    if(b.gold&&!b.goldPop){b.goldPop=true;pop(b.from.x,b.from.y-70,'GOLDEN BALL! x3','#facc15',26);}
+    if(b.gold&&!b.goldPop){b.goldPop=true;pop(b.from.x,b.from.y-70,'GOLDEN BALL! x3','#facc15',26);tone(1568,.35,'triangle',.12,2093);}
     const p=ballPos(b);
     b.trail.push({x:p.x,y:p.y,r:p.r});if(b.trail.length>9)b.trail.shift();
     b.rot+=dt*12;
@@ -646,6 +705,7 @@ function updatePenalty(dt){
 const OV=document.createElement('canvas');OV.width=W;OV.height=H;const ovx=OV.getContext('2d');
 
 function draw(){
+  musicTick(); // runs on the real clock, unaffected by sim speed
   // display score eases toward real score
   S.dispScore+=(S.score-S.dispScore)*.12;
   if(Math.abs(S.score-S.dispScore)<1)S.dispScore=S.score;
@@ -682,6 +742,17 @@ function draw(){
   if(S.flash>0){ctx.fillStyle=`rgba(${S.flashCol},${S.flash*.4})`;ctx.fillRect(0,0,W,H);}
   if(S.hbPulse>0){ctx.strokeStyle=`rgba(248,113,113,${S.hbPulse*.5})`;ctx.lineWidth=14;ctx.strokeRect(7,7,W-14,H-14);}
   ctx.restore();
+  if(S.paused){
+    ctx.fillStyle='rgba(2,6,16,.78)';ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';
+    ctx.fillStyle='#f8fafc';ctx.font='italic bold 54px Arial';ctx.fillText('PAUSED',GCX,285);
+    ctx.fillStyle='#94a3b8';ctx.font='18px Arial';ctx.fillText('CLICK TO RESUME  •  P / ESC',GCX,325);
+  }
+  // sound toggle (bottom-right, all screens)
+  ctx.globalAlpha=Math.hypot(PT.x-(W-30),PT.y-(H-26))<20?1:.55;
+  ctx.font='20px Arial';ctx.textAlign='center';
+  ctx.fillStyle='#e2e8f0';ctx.fillText(['🔊','🔈','🔇'][MUTE],W-30,H-18);
+  ctx.globalAlpha=1;
   drawCursor();
 }
 function drawStadium(){
@@ -1028,6 +1099,11 @@ function drawHUD(){
   }
   if(S.mode==='play'&&S.gameMode==='royale'&&S.R)drawBoard();
   if(S.mode==='play'&&S.gameMode==='duel'&&S.D)drawDots();
+  // first-run controls hint
+  if(S.mode==='play'&&S.gameMode==='solo'&&S.matchIdx===1&&S.shotIdx<=1&&S.sub==='volley'){
+    ctx.textAlign='center';ctx.fillStyle='rgba(226,232,240,.75)';ctx.font='bold 17px Arial';
+    ctx.fillText('MOVE mouse = glove   •   CLICK = dive',GCX,520);
+  }
 }
 function drawDots(){
   const D=S.D;
@@ -1120,6 +1196,8 @@ function drawPick(){
   ctx.fillStyle='rgba(2,6,16,.82)';ctx.fillRect(0,0,W,H);
   ctx.textAlign='center';ctx.fillStyle='#f8fafc';ctx.font='italic bold 40px Arial';
   ctx.fillText('CHOOSE YOUR FATE',GCX,100);
+  const hi=cardAt(PT.x,PT.y);
+  if(hi!==S._hovCard){S._hovCard=hi;if(hi!=null)tone(900,.04,'triangle',.06);}
   for(let i=0;i<3;i++){
     const m=S.cards[i],x=80+i*280,hov=cardAt(PT.x,PT.y)===i,y=150-(hov?10:0);
     const col=m.k==='buff'?'#22c55e':'#a855f7';
@@ -1156,6 +1234,8 @@ function drawTitle(){
   // mode buttons
   const hv=PT.y>408&&PT.y<466;
   const btn=(cx,label,sub,bg,fg,hov)=>{
+    if(hov&&S._hovBtn!==label){S._hovBtn=label;tone(900,.04,'triangle',.06);}
+    if(!hov&&S._hovBtn===label)S._hovBtn=null;
     ctx.save();ctx.translate(cx,437);
     const k=hov?1.07:1+Math.sin(S.t*4)*.025;ctx.scale(k,k);
     ctx.fillStyle=bg;rr(-100,-29,200,58,24);ctx.fill();
@@ -1278,7 +1358,7 @@ window.__sk={
   autopick:v=>{S.autopick=!!v;},
   speed:v=>{S.debugTs=+v||1;},
   hurt:()=>{S.hp=1;},
-  step:s=>{let n=Math.floor((+s||1)/SIM_H);while(n-->0)simTick(SIM_H);draw();return window.__sk.info();},
+  step:s=>{S.paused=false;let n=Math.floor((+s||1)/SIM_H);while(n-->0)simTick(SIM_H);draw();return window.__sk.info();},
 };
 </script>
 </body>
