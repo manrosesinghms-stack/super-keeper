@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Super Keeper — store art generator</title>
+<style>body{background:#0b1026;color:#e2e8f0;font-family:Arial;padding:20px}canvas{display:block;margin:12px 0;max-width:640px;border:1px solid #334}a{color:#22d3ee;font-weight:bold;font-size:18px}</style>
+</head>
+<body>
+<h1>Store art — right-click or use links to save</h1>
+<div id="out"></div>
+<script>
+'use strict';
+function drawArt(cv,mode){
+  const W=cv.width,H=cv.height,x=cv.getContext('2d');
+  const CX=W/2;
+  // sky
+  let g=x.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#070b1e');g.addColorStop(.45,'#101a3d');g.addColorStop(.75,'#0e2a24');g.addColorStop(1,'#0a2016');
+  x.fillStyle=g;x.fillRect(0,0,W,H);
+  // stars
+  for(let i=0;i<90;i++){x.fillStyle='rgba(226,232,240,'+(Math.random()*.5+.2)+')';x.fillRect(Math.random()*W,Math.random()*H*.4,W*.002,W*.002);}
+  // floodlight cones
+  for(const side of [0,1]){
+    const tx=side?W*.94:W*.06;
+    const cone=x.createLinearGradient(tx,0,CX,H);
+    cone.addColorStop(0,'rgba(255,244,214,.16)');cone.addColorStop(1,'rgba(255,244,214,0)');
+    x.fillStyle=cone;
+    x.beginPath();x.moveTo(tx-W*.03,0);x.lineTo(tx+W*.03,0);x.lineTo(CX+(side?-1:1)*W*.1+W*.22,H);x.lineTo(CX+(side?-1:1)*W*.1-W*.22,H);x.closePath();x.fill();
+  }
+  // crowd band
+  x.fillStyle='#0c1225';x.fillRect(0,H*.42,W,H*.1);
+  for(let i=0;i<300;i++){
+    x.fillStyle=['#1d4ed8','#e2e8f0','#94a3b8','#facc15'][Math.floor(Math.random()*4)];
+    x.fillRect(Math.random()*W,H*.43+Math.random()*H*.08,W*.004,W*.005);
+  }
+  // pitch
+  g=x.createLinearGradient(0,H*.52,0,H);
+  g.addColorStop(0,'#1a6b38');g.addColorStop(1,'#0f6a32');
+  x.fillStyle=g;x.fillRect(0,H*.52,W,H*.48);
+  x.fillStyle='rgba(255,255,255,.04)';
+  for(let i=0;i<4;i++)x.fillRect(0,H*.56+i*H*.12,W,H*.06);
+  // goal hint
+  x.strokeStyle='rgba(248,250,252,.9)';x.lineWidth=W*.008;x.lineCap='round';
+  x.beginPath();x.moveTo(W*.12,H*.78);x.lineTo(W*.12,H*.5);x.lineTo(W*.88,H*.5);x.lineTo(W*.88,H*.78);x.stroke();
+  x.strokeStyle='rgba(226,232,240,.15)';x.lineWidth=Math.max(1,W*.0012);
+  for(let i=1;i<16;i++){x.beginPath();x.moveTo(W*.12+i*(W*.76/16),H*.5);x.lineTo(W*.12+i*(W*.76/16),H*.78);x.stroke();}
+  for(let i=1;i<6;i++){x.beginPath();x.moveTo(W*.12,H*.5+i*(H*.28/6));x.lineTo(W*.88,H*.5+i*(H*.28/6));x.stroke();}
+  // vignette
+  const vg=x.createRadialGradient(CX,H*.5,H*.4,CX,H*.5,W*.75);
+  vg.addColorStop(0,'rgba(0,0,0,0)');vg.addColorStop(1,'rgba(0,0,0,.4)');
+  x.fillStyle=vg;x.fillRect(0,0,W,H);
+
+  const S=mode==='square'?W/1024:H/1152; // scale unit
+  const glY=mode==='square'?H*.34:H*.4, glR=mode==='square'?W*.21:H*.19;
+  const glX=mode==='square'?CX:CX;
+  // golden ball streaking in
+  const bx=glX+glR*1.9,by=glY-glR*1.1,br=glR*.34;
+  for(let i=5;i>0;i--){x.fillStyle='rgba(250,204,21,'+(0.05*i)+')';x.beginPath();x.arc(bx+i*br*.7,by-i*br*.35,br*.92,0,7);x.fill();}
+  const bg2=x.createRadialGradient(bx-br*.3,by-br*.3,br*.1,bx,by,br);
+  bg2.addColorStop(0,'#fef9c3');bg2.addColorStop(.7,'#facc15');bg2.addColorStop(1,'#b45309');
+  x.fillStyle=bg2;x.beginPath();x.arc(bx,by,br,0,7);x.fill();
+  x.strokeStyle='#92400e';x.lineWidth=br*.06;x.stroke();
+  x.fillStyle='#92400e';
+  for(let i=0;i<5;i++){const a=i*1.256;x.beginPath();x.arc(bx+Math.cos(a)*br*.55,by+Math.sin(a)*br*.55,br*.2,0,7);x.fill();}
+  // glove crest
+  x.save();x.translate(glX,glY);x.rotate(-.14);
+  const gg=x.createRadialGradient(-glR*.3,-glR*.3,glR*.15,0,0,glR);
+  gg.addColorStop(0,'#fde047');gg.addColorStop(1,'#d97706');
+  x.fillStyle=gg;x.beginPath();x.arc(0,0,glR,0,7);x.fill();
+  x.strokeStyle='#fff';x.lineWidth=glR*.09;x.stroke();
+  for(let i=0;i<4;i++){const a=-2.1+i*.5;x.beginPath();x.arc(Math.cos(a)*glR*.82,Math.sin(a)*glR*.82,glR*.26,0,7);x.fill();x.stroke();}
+  x.fillStyle='rgba(255,255,255,.25)';x.beginPath();x.arc(-glR*.3,-glR*.3,glR*.3,0,7);x.fill();
+  x.restore();
+  // logo
+  const ly=mode==='square'?H*.72:H*.75;
+  const fs=mode==='square'?W*.135:W*.093;
+  x.textAlign='center';
+  x.font='italic bold '+(fs*.32)+'px Arial';x.fillStyle='#22d3ee';
+  x.fillText('S U P E R',CX,ly-fs*.72);
+  x.font='italic 900 '+fs+'px Arial';
+  x.lineJoin='round';
+  x.fillStyle='#0f172a';
+  for(let i=Math.ceil(fs*.06);i>0;i--)x.fillText('KEEPER',CX+i,ly+i);
+  x.fillStyle='#f8fafc';x.fillText('KEEPER',CX,ly);
+  if(mode!=='square'){
+    x.font='bold '+(fs*.19)+'px Arial';x.fillStyle='#facc15';
+    x.fillText('SAVE EVERYTHING  •  PICK YOUR CHAOS  •  BECOME THE WALL',CX,ly+fs*.42);
+  }
+}
+const sizes=[['cover_16x9_2048x1152',2048,1152,'wide'],['cover_16x9_1920x1080',1920,1080,'wide'],['icon_1x1_1024',1024,1024,'square'],['icon_1x1_512',512,512,'square'],['thumb_4x3_1600x1200',1600,1200,'wide']];
+const out=document.getElementById('out');
+for(const [name,w,h,mode] of sizes){
+  const cv=document.createElement('canvas');cv.width=w;cv.height=h;
+  drawArt(cv,mode);
+  const a=document.createElement('a');
+  a.href=cv.toDataURL('image/png');a.download='superkeeper_'+name+'.png';
+  a.textContent='⬇ download '+name+'.png';
+  out.appendChild(a);out.appendChild(cv);
+}
+</script>
+</body>
+</html>
