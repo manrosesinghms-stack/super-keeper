@@ -202,6 +202,32 @@ const GRADES=[
   {min:0,l:'D',t:'SWISS CHEESE',c:'#f87171'},
 ];
 
+/* ---------- currency + shop (persistent, outside run state) ---------- */
+let COINS=+(localStorage.getItem('sk_coins')||0);
+function addCoins(n){COINS+=n;try{localStorage.setItem('sk_coins',COINS);}catch(e){}}
+const SKINS=[
+  {id:'amber',name:'AMBER',cost:0,c0:'#fde047',c1:'#d97706'},
+  {id:'arctic',name:'ARCTIC',cost:150,c0:'#67e8f9',c1:'#0891b2'},
+  {id:'crimson',name:'CRIMSON',cost:150,c0:'#fca5a5',c1:'#b91c1c'},
+  {id:'void',name:'VOID',cost:250,c0:'#c4b5fd',c1:'#6d28d9'},
+  {id:'emerald',name:'EMERALD',cost:250,c0:'#6ee7b7',c1:'#047857'},
+  {id:'champion',name:'CHAMPION GOLD',cost:500,c0:'#fef08a',c1:'#b45309'},
+];
+let OWNED=(()=>{try{return JSON.parse(localStorage.getItem('sk_owned')||'["amber"]');}catch(e){return['amber'];}})();
+let EQUIPPED=localStorage.getItem('sk_equip')||'amber';
+function saveOwned(){try{localStorage.setItem('sk_owned',JSON.stringify(OWNED));}catch(e){}}
+function saveEquip(){try{localStorage.setItem('sk_equip',EQUIPPED);}catch(e){}}
+function currentSkin(){return SKINS.find(s=>s.id===EQUIPPED)||SKINS[0];}
+
+/* ---------- level mode (structured campaign — the "Choice" alt to Endless) ---------- */
+const LEVELS=[
+  {shots:4,maxConcede:1,reward:40},{shots:5,maxConcede:1,reward:50},{shots:5,maxConcede:1,reward:60},
+  {shots:6,maxConcede:2,reward:70},{shots:6,maxConcede:1,reward:90},{shots:7,maxConcede:2,reward:100},
+  {shots:7,maxConcede:1,reward:130},{shots:8,maxConcede:2,reward:150},{shots:8,maxConcede:1,reward:180},
+  {shots:9,maxConcede:2,reward:220},{shots:9,maxConcede:1,reward:260},{shots:10,maxConcede:2,reward:320},
+];
+let LEVEL_BEST=+(localStorage.getItem('sk_level')||0);
+
 /* ---------- precomputed scenery ---------- */
 const STARS=[];for(let i=0;i<70;i++)STARS.push({x:rnd(0,W),y:rnd(2,44),s:rnd(.6,1.8),ph:rnd(0,7)});
 const CROWD=[];
@@ -231,6 +257,7 @@ function baseState(){
     hype:.3, hint:null, cards:null, pen:null, overLock:0, overT:0, grade:null, R:null, royaleResult:null, D:null, duelResult:null,
     wave:{on:false,x:0,shown:false}, duck:{t:-1,x:-60,quacked:false}, postShake:0,
     chantT:6, hbT:0, hbPulse:0,
+    levelIdx:0, levelsResult:null, orb:null, megaT:0,
     best:+(localStorage.getItem('sk_best')||0),
   };
 }
@@ -245,6 +272,19 @@ function deadBall(x,y,dirX,gold,big){
   S.deadBalls.push({x,y,vx:dirX*rnd(220,480),vy:-rnd(140,340),r:big||11,rot:rnd(0,6),vr:rnd(-9,9),t:0,life:1.2,gold:!!gold});
 }
 function grassKick(x,y){for(let i=0;i<10;i++)S.parts.push({x,y,vx:rnd(-140,140),vy:-rnd(60,260),life:rnd(.3,.6),t:0,c:pick(['#166534','#14532d','#a16207']),s:rnd(2,4),g:900});}
+function maybeSpawnOrb(x,y){ if(S.orb||Math.random()>0.3)return; S.orb={x,y:y-40,vy:40,t:0}; }
+function updateOrb(dt){
+  if(S.orb){
+    S.orb.t+=dt;S.orb.y+=S.orb.vy*dt;S.orb.vy*=0.98;
+    if(dist(S.glove,S.orb)<effGloveR()+18){
+      S.megaT=8;S.orb=null;
+      pop(S.glove.x,S.glove.y-30,'⚡ MEGA GLOVE!','#67e8f9',30);
+      burst(S.glove.x,S.glove.y,20,['#67e8f9','#fff'],380);
+      tone(1200,.2,'triangle',.15,2000);
+    }else if(S.orb.t>4){S.orb=null;}
+  }
+  if(S.megaT>0)S.megaT=Math.max(0,S.megaT-dt);
+}
 
 /* ---------- run flow ---------- */
 function startRun(){
@@ -301,7 +341,7 @@ function resolveBall(b){
     }
     return;
   }
-  const reach=S.gloveR+8+(S.dive>0?20:0);
+  const reach=effGloveR()+8+(S.dive>0?20:0);
   const d=dist(S.glove,end);
   if(S.god||d<reach){
     b.saved=true;S.saves++;S.streak++;S.hype=Math.min(1,S.hype+.22);
@@ -319,6 +359,8 @@ function resolveBall(b){
     deadBall(end.x,end.y,end.x<GCX?-1:1,b.gold);
     S.freeze=Math.max(S.freeze,.07);S.punch=1;S.punchX=end.x;S.punchY=end.y;
     S.saveGrin=1;
+    addCoins(1+(isSuper?4:0)+(b.gold?5:0));
+    if(isSuper||b.gold)maybeSpawnOrb(end.x,end.y);
     sSave();roar(isSuper?1:.5);S.shake=Math.max(S.shake,5);
     if(S.streak%5===0){sdkHappy();pop(GCX,GY0-40,'STREAK x'+S.streak+' 🔥','#fb923c',30);tone(300,.35,'sawtooth',.1,900);}
   }else{
@@ -341,6 +383,11 @@ function endVolley(){
     return;
   }
   if(S.gameMode==='duel'){duelAfterDefend();return;}
+  if(S.gameMode==='levels'){
+    if(S.shotIdx>=S.shotsTotal)endLevel();
+    else nextVolley();
+    return;
+  }
   if(S.hp<=0){endRun();return;}
   if(S.shotIdx>=S.shotsTotal)endMatch();
   else nextVolley();
@@ -349,7 +396,7 @@ function endMatch(){
   const clean=S.matchConceded===0;
   if(clean){
     S.hp=Math.min(5,S.hp+1);
-    const pts=Math.round(500*S.mult);S.score+=pts;
+    const pts=Math.round(500*S.mult);S.score+=pts;addCoins(15);
     pop(GCX,250,'CLEAN SHEET! +'+pts,'#4ade80',42);pop(GCX,292,'+1 HEART','#f472b6',24);
     confetti();fireworksShow();sFanfare();roar(1);sdkHappy();
   }else pop(GCX,260,'FULL TIME — SURVIVED','#e2e8f0',34);
@@ -381,6 +428,52 @@ function endRun(){
     sdkStop();
   },700);
   sGoal();
+}
+
+/* ---------- LEVELS (structured campaign — the "Choice" alt to Endless) ---------- */
+function startLevels(){
+  S=Object.assign(baseState(),{mode:'play',gameMode:'levels',god:S.god,autopick:S.autopick,debugTs:S.debugTs});
+  S.levelIdx=0;
+  startLevel();sdkStart();
+}
+function startLevel(){
+  const lv=LEVELS[S.levelIdx];
+  S.matchIdx=S.levelIdx+1;
+  const nat=NATIONS[S.levelIdx%NATIONS.length];
+  S.nation=nat;paintCrowd(nat);
+  S.shotsTotal=lv.shots;S.shotIdx=0;S.matchConceded=0;
+  S.sub='intro';S.subT=0;S.volley=null;
+  if(Math.random()<0.22){S.duck.t=0;S.duck.x=-60;S.duck.quacked=false;}
+  sWhistle();
+}
+function endLevel(){
+  const lv=LEVELS[S.levelIdx];
+  const cleared=S.matchConceded<=lv.maxConcede;
+  if(cleared){
+    addCoins(lv.reward);
+    if(S.levelIdx+1>LEVEL_BEST){LEVEL_BEST=S.levelIdx+1;try{localStorage.setItem('sk_level',LEVEL_BEST);}catch(e){}}
+    pop(GCX,250,'LEVEL '+(S.levelIdx+1)+' CLEAR!  +'+lv.reward+' 🪙','#4ade80',38);
+    confetti();sFanfare();roar(1);sdkHappy();
+    S.sub='levelclear';S.subT=0;
+  }else{
+    pop(GCX,260,'LEVEL FAILED','#f87171',36);
+    sGoal();
+    S.sub='levelfail';S.subT=0;
+  }
+}
+function afterLevel(){
+  if(S.sub==='levelclear'){
+    if(S.levelIdx>=LEVELS.length-1){levelsOver(true);return;}
+    S.levelIdx++;startLevel();
+  }else{
+    levelsOver(false);
+  }
+}
+function levelsOver(won){
+  S.mode='over';S.overLock=.8;S.overT=0;
+  S.levelsResult={won,cleared:S.levelIdx+(won?1:0)};
+  if(won){confetti();fireworksShow();sFanfare();sdkHappy();}
+  sdkStop();
 }
 
 /* ---------- PENALTY ROYALE (knockout vs 7 rivals) ---------- */
@@ -443,6 +536,7 @@ function advanceRelim(){
 function royaleOver(won){
   S.mode='over';S.overLock=.8;S.overT=0;
   S.royaleResult={won,place:won?1:(S.R.players[0].place||2)};
+  addCoins(won?100:Math.max(0,(9-S.royaleResult.place)*10));
   if(won){confetti();fireworksShow();sFanfare();sdkHappy();}
   else sGoal();
   sdkStop();
@@ -527,14 +621,14 @@ function duelDecide(){
     if(D.stage>=2){duelOver(true);return;}
     D.stage++;
     pop(GCX,260,'YOU ADVANCE!','#4ade80',40);confetti();sFanfare();sdkHappy();
-    S.score+=500;
+    S.score+=500;addCoins(30);
     startDuelMatch();
   }else duelOver(false);
 }
 function duelOver(won){
   S.mode='over';S.overLock=.8;S.overT=0;
   S.duelResult={won,stage:S.D.stage};
-  if(won){confetti();fireworksShow();sFanfare();sdkHappy();}
+  if(won){addCoins(150);confetti();fireworksShow();sFanfare();sdkHappy();}
   else sGoal();
   sdkStop();
 }
@@ -546,15 +640,29 @@ function onDown(){
     applyMute();sPickUI();return;
   }
   if(S.paused){S.paused=false;return;}
-  if(S.mode==='title'){
-    if(PT.y>408&&PT.y<466){
-      if(PT.x>GCX-310&&PT.x<GCX-110){startRun();return;}
-      if(PT.x>GCX-100&&PT.x<GCX+100){startRoyale();return;}
-      if(PT.x>GCX+110&&PT.x<GCX+310){startDuel();return;}
+  if(S.mode==='shop'){
+    if(PT.x>=20&&PT.x<=130&&PT.y>=20&&PT.y<=60){S.mode='title';sPickUI();return;}
+    const idx=shopSkinAt(PT.x,PT.y);
+    if(idx!=null){
+      const sk=SKINS[idx];
+      if(EQUIPPED===sk.id){/* already equipped */}
+      else if(OWNED.includes(sk.id)){EQUIPPED=sk.id;saveEquip();sPickUI();}
+      else if(COINS>=sk.cost){COINS-=sk.cost;try{localStorage.setItem('sk_coins',COINS);}catch(e){}OWNED.push(sk.id);saveOwned();EQUIPPED=sk.id;saveEquip();sFanfare();}
+      else{tone(160,.15,'square',.12,90);}
     }
     return;
   }
-  if(S.mode==='over'){if(S.overLock<=0){if(S.gameMode==='royale')startRoyale();else if(S.gameMode==='duel')startDuel();else startRun();}return;}
+  if(S.mode==='title'){
+    const inBtn=(cx,cy,w,h)=>PT.x>=cx-w/2&&PT.x<=cx+w/2&&PT.y>=cy-h/2&&PT.y<=cy+h/2;
+    const c1=GCX-125,c2=GCX+125,r1=345,r2=425,bw=220,bh=64;
+    if(inBtn(c1,r1,bw,bh)){startRun();return;}
+    if(inBtn(c2,r1,bw,bh)){startLevels();return;}
+    if(inBtn(c1,r2,bw,bh)){startRoyale();return;}
+    if(inBtn(c2,r2,bw,bh)){startDuel();return;}
+    if(inBtn(GCX,490,180,42)){S.mode='shop';sPickUI();return;}
+    return;
+  }
+  if(S.mode==='over'){if(S.overLock<=0){if(S.gameMode==='royale')startRoyale();else if(S.gameMode==='duel')startDuel();else if(S.gameMode==='levels')startLevels();else startRun();}return;}
   if(S.mode==='pick'){const c=cardAt(PT.x,PT.y);if(c!=null)applyMut(S.cards[c]);return;}
   if(S.mode==='penalty'&&S.pen.phase==='aim'){takeAimedShot();return;}
   if(S.mode==='play'){
@@ -619,6 +727,7 @@ function gloveTarget(){
   }
   return {x:clamp(PT.x,GX0-20,GX1+20),y:clamp(PT.y,GY0-10,GY1+15)};
 }
+function effGloveR(){return S.gloveR+(S.megaT>0?18:0);}
 function updateKeeper(dt){
   S.dive=Math.max(0,S.dive-dt);
   S.diveCd=Math.max(0,S.diveCd-dt);
@@ -642,11 +751,14 @@ function ballPos(b){
 }
 function updatePlay(dt){
   updateKeeper(dt);
+  updateOrb(dt);
   S.subT+=dt;
   if(S.sub==='intro'){if(S.subT>1.3){if(S.gameMode==='duel')duelDefend();else nextVolley();}return;}
   if(S.sub==='intro2'){if(S.subT>.8)duelDefend();return;}
   if(S.sub==='dshoot'){updateDuelShot(dt);return;}
   if(S.sub==='matchend'){if(S.subT>1.5)afterMatch();return;}
+  if(S.sub==='levelclear'){if(S.subT>1.6)afterLevel();return;}
+  if(S.sub==='levelfail'){if(S.subT>1.6)afterLevel();return;}
   if(S.sub==='relim'){if(S.autopick&&S.subT>.5)advanceRelim();return;}
   if(S.sub==='dead')return;
   if(S.sub!=='volley'||!S.volley)return;
@@ -714,12 +826,13 @@ function draw(){
   if(S.punch>0){const s=1+S.punch*.045;ctx.translate(S.punchX,S.punchY);ctx.scale(s,s);ctx.translate(-S.punchX,-S.punchY);}
   drawStadium();
   if(S.mode==='title')drawTitle();
+  else if(S.mode==='shop')drawShop();
   else if(S.mode==='over'){drawGoal();drawOver();}
   else{
     if(S.mode==='play'||S.mode==='penalty'){
       drawGoal();
       if(S.mode==='play'&&S.sub==='dshoot')drawPenalty();
-      else if(S.mode==='play'){drawShooter();drawKeeper();drawBalls();drawHint();}
+      else if(S.mode==='play'){drawShooter();drawKeeper();drawBalls();drawHint();drawOrb();}
       else drawPenalty();
     }
     drawDuck();
@@ -915,9 +1028,10 @@ function drawKeeper(){
   ctx.beginPath();ctx.moveTo(bx-13,by-68+crouch);ctx.quadraticCurveTo((bx+g.x)/2-22,(by+g.y)/2-42,g.x-10,g.y+6);ctx.stroke();
   ctx.beginPath();ctx.moveTo(bx+13,by-68+crouch);ctx.quadraticCurveTo((bx+g.x)/2+22,(by+g.y)/2-42,g.x+10,g.y+6);ctx.stroke();
   // glove
-  const R=S.gloveR+(S.dive>0?10:0);
+  const sk=currentSkin();
+  const R=effGloveR()+(S.dive>0?10:0);
   const gg=ctx.createRadialGradient(g.x-R*.3,g.y-R*.3,R*.2,g.x,g.y,R);
-  gg.addColorStop(0,S.dive>0?'#fde047':'#fbbf24');gg.addColorStop(1,'#d97706');
+  gg.addColorStop(0,S.dive>0?'#ffffff':sk.c0);gg.addColorStop(1,sk.c1);
   ctx.fillStyle=gg;
   ctx.beginPath();ctx.arc(g.x,g.y,R,0,7);ctx.fill();
   ctx.strokeStyle='#fff';ctx.lineWidth=4;ctx.stroke();
@@ -994,6 +1108,16 @@ function drawBall(x,y,r,rot,alpha,gold){
   ctx.fillStyle=gold?'#92400e':'#1e293b';
   for(let i=0;i<5;i++){const a=i*1.256;ctx.beginPath();ctx.arc(Math.cos(a)*r*.55,Math.sin(a)*r*.55,r*.2,0,7);ctx.fill();}
   ctx.fillStyle='rgba(255,255,255,.5)';ctx.beginPath();ctx.arc(-r*.35,-r*.4,r*.16,0,7);ctx.fill();
+  ctx.restore();
+}
+function drawOrb(){
+  if(!S.orb)return;
+  const o=S.orb,pu=1+Math.sin(S.t*8)*.15;
+  ctx.save();ctx.translate(o.x,o.y);ctx.scale(pu,pu);
+  const g=ctx.createRadialGradient(-4,-4,2,0,0,16);
+  g.addColorStop(0,'#fff');g.addColorStop(.5,'#67e8f9');g.addColorStop(1,'rgba(103,232,249,0)');
+  ctx.fillStyle=g;ctx.beginPath();ctx.arc(0,0,16,0,7);ctx.fill();
+  ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.beginPath();ctx.arc(0,0,10,0,7);ctx.stroke();
   ctx.restore();
 }
 function drawHint(){
@@ -1075,6 +1199,11 @@ function drawHUD(){
     ctx.fillStyle='rgba(2,6,16,.5)';rr(10,12,330,32,9);ctx.fill();
     ctx.textAlign='left';ctx.fillStyle='#facc15';ctx.font='bold 15px Arial';
     ctx.fillText(DUEL_STAGES[S.D.stage]+'  •  YOU '+S.D.myGoals+' — '+S.D.theirGoals+' '+duelRival().name,22,33);
+  }else if(S.gameMode==='levels'){
+    ctx.fillStyle='rgba(2,6,16,.5)';rr(10,12,270,32,9);ctx.fill();
+    ctx.textAlign='left';ctx.fillStyle='#38bdf8';ctx.font='bold 15px Arial';
+    const lv=LEVELS[S.levelIdx];
+    ctx.fillText('LEVEL '+(S.levelIdx+1)+'/'+LEVELS.length+'  •  CONCEDED '+S.matchConceded+'/'+lv.maxConcede,22,33);
   }else{
     // hearts panel
     ctx.fillStyle='rgba(2,6,16,.5)';rr(10,12,150,32,9);ctx.fill();
@@ -1086,6 +1215,12 @@ function drawHUD(){
     drawFlame(28,72,7+Math.min(S.streak,12)*.5);
     ctx.fillStyle='#fb923c';ctx.font='bold 16px Arial';ctx.textAlign='left';ctx.fillText('x'+S.streak,42,70);
   }
+  if(S.megaT>0){
+    ctx.fillStyle='rgba(2,6,16,.5)';rr(104,50,110,28,9);ctx.fill();
+    ctx.fillStyle='#67e8f9';ctx.font='bold 13px Arial';ctx.textAlign='left';ctx.fillText('⚡ '+S.megaT.toFixed(1)+'s',114,70);
+  }
+  ctx.fillStyle='rgba(2,6,16,.5)';rr(830,50,120,28,9);ctx.fill();
+  ctx.fillStyle='#facc15';ctx.font='bold 13px Arial';ctx.textAlign='right';ctx.fillText('🪙 '+COINS,938,70);
   // score panel
   ctx.fillStyle='rgba(2,6,16,.5)';rr(GCX-95,8,190,52,10);ctx.fill();
   ctx.textAlign='center';
@@ -1100,8 +1235,8 @@ function drawHUD(){
   if(S.mode==='play'&&S.gameMode==='royale'&&S.R)drawBoard();
   if(S.mode==='play'&&S.gameMode==='duel'&&S.D)drawDots();
   // first-run controls hint
-  if(S.mode==='play'&&S.gameMode==='solo'&&S.matchIdx===1&&S.shotIdx<=1&&S.sub==='volley'){
-    ctx.textAlign='center';ctx.fillStyle='rgba(226,232,240,.75)';ctx.font='bold 17px Arial';
+  if(S.mode==='play'&&(S.gameMode==='solo'||S.gameMode==='levels')&&S.matchIdx===1&&S.shotIdx<=2&&S.sub==='volley'){
+    ctx.textAlign='center';ctx.fillStyle='rgba(226,232,240,.85)';ctx.font='bold 17px Arial';
     ctx.fillText('MOVE mouse = glove   •   CLICK = dive',GCX,520);
   }
 }
@@ -1181,6 +1316,15 @@ function drawIntro(){
     ctx.fillText(S.R.round<4?(S.shotsTotal+' shots — lowest 2 are OUT'):'Winner takes the crown',GCX,344);
     return;
   }
+  if(S.gameMode==='levels'){
+    const lv=LEVELS[S.levelIdx];
+    ctx.fillStyle='#38bdf8';ctx.font='bold 22px Arial';ctx.fillText('LEVEL MODE',GCX,205);
+    ctx.fillStyle='#f8fafc';ctx.font='italic bold 56px Arial';ctx.fillText('LEVEL '+(S.levelIdx+1),GCX,272);
+    ctx.fillStyle='#e2e8f0';ctx.font='bold 18px Arial';
+    ctx.fillText('SAVE '+lv.shots+' SHOTS  •  CONCEDE AT MOST '+lv.maxConcede,GCX,312);
+    ctx.fillStyle='#94a3b8';ctx.font='15px Arial';ctx.fillText('CLEAR IT FOR 🪙 '+lv.reward,GCX,344);
+    return;
+  }
   ctx.fillStyle='#94a3b8';ctx.font='bold 22px Arial';ctx.fillText('MATCH '+S.matchIdx,GCX,205);
   ctx.fillStyle='#f8fafc';ctx.font='italic bold 54px Arial';ctx.fillText('YOU  vs  '+S.nation.n,GCX,270);
   // flag with shine
@@ -1218,41 +1362,94 @@ function drawTitle(){
   drawGoal();
   ctx.textAlign='center';
   // glove crest
-  ctx.save();ctx.translate(GCX,175);ctx.rotate(Math.sin(S.t*1.2)*.06);
-  const gg=ctx.createRadialGradient(-18,-18,10,0,0,66);
-  gg.addColorStop(0,'#fde047');gg.addColorStop(1,'#d97706');
-  ctx.fillStyle=gg;ctx.beginPath();ctx.arc(0,0,64,0,7);ctx.fill();
-  ctx.strokeStyle='#fff';ctx.lineWidth=6;ctx.stroke();
-  for(let i=0;i<4;i++){const a=-2.1+i*.5;ctx.beginPath();ctx.arc(Math.cos(a)*52,Math.sin(a)*52,16,0,7);ctx.fill();ctx.stroke();}
+  ctx.save();ctx.translate(GCX,120);ctx.rotate(Math.sin(S.t*1.2)*.06);
+  const sk0=currentSkin();
+  const gg=ctx.createRadialGradient(-14,-14,8,0,0,50);
+  gg.addColorStop(0,sk0.c0);gg.addColorStop(1,sk0.c1);
+  ctx.fillStyle=gg;ctx.beginPath();ctx.arc(0,0,48,0,7);ctx.fill();
+  ctx.strokeStyle='#fff';ctx.lineWidth=5;ctx.stroke();
+  for(let i=0;i<4;i++){const a=-2.1+i*.5;ctx.beginPath();ctx.arc(Math.cos(a)*40,Math.sin(a)*40,12,0,7);ctx.fill();ctx.stroke();}
   ctx.restore();
   // logo with extrude
-  ctx.font='italic bold 78px Arial';
-  ctx.fillStyle='#0f172a';for(let i=5;i>0;i--)ctx.fillText('SUPER KEEPER',GCX+i,318+i);
-  ctx.fillStyle='#f8fafc';ctx.fillText('SUPER KEEPER',GCX,318);
-  ctx.fillStyle='#22d3ee';ctx.font='bold 19px Arial';
-  ctx.fillText('SAVE EVERYTHING. PICK YOUR CHAOS. BECOME THE WALL.',GCX,352);
-  // mode buttons
-  const hv=PT.y>408&&PT.y<466;
-  const btn=(cx,label,sub,bg,fg,hov)=>{
+  ctx.font='italic bold 60px Arial';
+  ctx.fillStyle='#0f172a';for(let i=4;i>0;i--)ctx.fillText('SUPER KEEPER',GCX+i,232+i);
+  ctx.fillStyle='#f8fafc';ctx.fillText('SUPER KEEPER',GCX,232);
+  ctx.fillStyle='#22d3ee';ctx.font='bold 15px Arial';
+  ctx.fillText('SAVE EVERYTHING. PICK YOUR CHAOS. BECOME THE WALL.',GCX,258);
+  // coin balance (always visible, reinforces the currency loop)
+  ctx.textAlign='right';
+  ctx.fillStyle='rgba(2,6,16,.5)';rr(W-150,14,130,30,9);ctx.fill();
+  ctx.fillStyle='#facc15';ctx.font='bold 16px Arial';ctx.fillText('🪙 '+COINS,W-30,34);
+  ctx.textAlign='center';
+  // mode grid: ENDLESS / LEVELS / ROYALE / DUEL
+  const inBtn=(cx,cy,w,h)=>PT.x>=cx-w/2&&PT.x<=cx+w/2&&PT.y>=cy-h/2&&PT.y<=cy+h/2;
+  const btn=(cx,cy,w,h,label,sub,bg,fg,hov)=>{
     if(hov&&S._hovBtn!==label){S._hovBtn=label;tone(900,.04,'triangle',.06);}
     if(!hov&&S._hovBtn===label)S._hovBtn=null;
-    ctx.save();ctx.translate(cx,437);
-    const k=hov?1.07:1+Math.sin(S.t*4)*.025;ctx.scale(k,k);
-    ctx.fillStyle=bg;rr(-100,-29,200,58,24);ctx.fill();
-    ctx.strokeStyle='#fff';ctx.lineWidth=3;rr(-100,-29,200,58,24);ctx.stroke();
-    ctx.fillStyle=fg;ctx.font='bold 19px Arial';ctx.textAlign='center';ctx.fillText(label,0,0);
-    ctx.font='bold 10px Arial';ctx.fillText(sub,0,19);
+    ctx.save();ctx.translate(cx,cy);
+    const k=hov?1.06:1+Math.sin(S.t*4)*.02;ctx.scale(k,k);
+    ctx.fillStyle=bg;rr(-w/2,-h/2,w,h,18);ctx.fill();
+    ctx.strokeStyle='#fff';ctx.lineWidth=3;rr(-w/2,-h/2,w,h,18);ctx.stroke();
+    ctx.fillStyle=fg;ctx.font='bold 18px Arial';ctx.fillText(label,0,-2);
+    ctx.font='bold 10px Arial';ctx.fillText(sub,0,17);
     ctx.restore();
   };
-  btn(GCX-210,'SOLO RUN','ROGUELIKE GAUNTLET','#facc15','#0f172a',hv&&PT.x>GCX-310&&PT.x<GCX-110);
-  btn(GCX,'PENALTY ROYALE',(Math.sin(S.t*6)>0?'● ':'○ ')+'LIVE — 8 KEEPERS','#e11d48','#fff',hv&&PT.x>GCX-100&&PT.x<GCX+100);
-  btn(GCX+210,'DUEL CUP','1v1 SHOOTOUT LADDER','#7c3aed','#fff',hv&&PT.x>GCX+110&&PT.x<GCX+310);
-  ctx.fillStyle='#94a3b8';ctx.font='15px Arial';ctx.textAlign='center';
-  ctx.fillText('MOVE = GLOVE   •   CLICK = DIVE',GCX,498);
+  const c1=GCX-125,c2=GCX+125,r1=345,r2=425,bw=220,bh=64;
+  btn(c1,r1,bw,bh,'ENDLESS','ROGUELIKE GAUNTLET','#facc15','#0f172a',inBtn(c1,r1,bw,bh));
+  btn(c2,r1,bw,bh,'LEVELS','CLEAR '+LEVELS.length+' LEVELS','#38bdf8','#0f172a',inBtn(c2,r1,bw,bh));
+  btn(c1,r2,bw,bh,'ROYALE',(Math.sin(S.t*6)>0?'● ':'○ ')+'8 KEEPERS LIVE','#e11d48','#fff',inBtn(c1,r2,bw,bh));
+  btn(c2,r2,bw,bh,'DUEL','1v1 SHOOTOUT LADDER','#7c3aed','#fff',inBtn(c2,r2,bw,bh));
+  // shop button
+  const shHov=inBtn(GCX,490,180,42);
+  ctx.save();ctx.translate(GCX,490);const shk=shHov?1.06:1;ctx.scale(shk,shk);
+  ctx.fillStyle='#0f172a';rr(-90,-21,180,42,14);ctx.fill();
+  ctx.strokeStyle=shHov?'#facc15':'#475569';ctx.lineWidth=2;rr(-90,-21,180,42,14);ctx.stroke();
+  ctx.fillStyle='#facc15';ctx.font='bold 15px Arial';ctx.fillText('🧤 GLOVE SHOP',0,5);
+  ctx.restore();
+  ctx.fillStyle='#94a3b8';ctx.font='13px Arial';
+  ctx.fillText('MOVE = GLOVE   •   CLICK = DIVE   •   LEVELS: '+LEVEL_BEST+'/'+LEVELS.length+' CLEARED',GCX,530);
   if(S.best>0){
-    ctx.fillStyle='rgba(2,6,16,.5)';rr(GCX-90,510,180,30,9);ctx.fill();
-    ctx.fillStyle='#facc15';ctx.font='bold 16px Arial';ctx.fillText('★ BEST: '+S.best,GCX,531);
+    ctx.fillStyle='rgba(2,6,16,.5)';rr(GCX-90,542,180,28,9);ctx.fill();
+    ctx.fillStyle='#facc15';ctx.font='bold 14px Arial';ctx.fillText('★ BEST: '+S.best,GCX,561);
   }
+}
+function shopSkinAt(x,y){
+  const cols=3,cw=260,ch=170,gapX=20,gapY=18;
+  const startX=GCX-(cols*cw+(cols-1)*gapX)/2;
+  for(let i=0;i<SKINS.length;i++){
+    const col=i%cols,row=(i/cols)|0;
+    const bx=startX+col*(cw+gapX), by=124+row*(ch+gapY);
+    if(x>=bx&&x<=bx+cw&&y>=by&&y<=by+ch)return i;
+  }
+  return null;
+}
+function drawShop(){
+  ctx.fillStyle='rgba(2,6,16,.92)';ctx.fillRect(0,0,W,H);
+  ctx.textAlign='center';
+  ctx.fillStyle='#f8fafc';ctx.font='italic bold 38px Arial';ctx.fillText('GLOVE SHOP',GCX,64);
+  ctx.fillStyle='#facc15';ctx.font='bold 18px Arial';ctx.fillText('🪙 '+COINS,GCX,96);
+  const cols=3,cw=260,ch=170,gapX=20,gapY=18;
+  const startX=GCX-(cols*cw+(cols-1)*gapX)/2;
+  SKINS.forEach((sk,i)=>{
+    const col=i%cols,row=(i/cols)|0;
+    const x=startX+col*(cw+gapX), y=124+row*(ch+gapY);
+    const owned=OWNED.includes(sk.id), isEq=EQUIPPED===sk.id;
+    const hov=PT.x>=x&&PT.x<=x+cw&&PT.y>=y&&PT.y<=y+ch;
+    ctx.fillStyle='#0f172a';rr(x,y,cw,ch,14);ctx.fill();
+    ctx.strokeStyle=isEq?'#4ade80':hov?'#facc15':'#334155';ctx.lineWidth=isEq?4:2;rr(x,y,cw,ch,14);ctx.stroke();
+    const gx=x+cw/2, gy=y+56, R=34;
+    const gg=ctx.createRadialGradient(gx-R*.3,gy-R*.3,R*.2,gx,gy,R);
+    gg.addColorStop(0,sk.c0);gg.addColorStop(1,sk.c1);
+    ctx.fillStyle=gg;ctx.beginPath();ctx.arc(gx,gy,R,0,7);ctx.fill();
+    ctx.strokeStyle='#fff';ctx.lineWidth=3;ctx.stroke();
+    ctx.fillStyle='#f8fafc';ctx.font='bold 17px Arial';ctx.fillText(sk.name,gx,y+112);
+    if(isEq){ctx.fillStyle='#4ade80';ctx.font='bold 13px Arial';ctx.fillText('EQUIPPED',gx,y+140);}
+    else if(owned){ctx.fillStyle='#94a3b8';ctx.font='bold 13px Arial';ctx.fillText('CLICK TO EQUIP',gx,y+140);}
+    else{ctx.fillStyle=COINS>=sk.cost?'#facc15':'#64748b';ctx.font='bold 14px Arial';ctx.fillText('🪙 '+sk.cost,gx,y+140);}
+  });
+  ctx.fillStyle='rgba(2,6,16,.5)';rr(20,20,110,40,10);ctx.fill();
+  ctx.strokeStyle='#475569';ctx.lineWidth=2;rr(20,20,110,40,10);ctx.stroke();
+  ctx.fillStyle='#e2e8f0';ctx.font='bold 15px Arial';ctx.fillText('‹ BACK',75,45);
 }
 function drawTrophy(x,y,s){
   ctx.fillStyle='#facc15';
@@ -1286,7 +1483,24 @@ function drawOver(){
       ctx.fillStyle='#94a3b8';ctx.font='17px Arial';ctx.fillText('The crown was three saves away.',GCX,328);
     }
     ctx.fillStyle='#f8fafc';ctx.font='bold 34px Arial';ctx.fillText(Math.round(S.score)+' pts',GCX,430);
+    ctx.fillStyle='#facc15';ctx.font='bold 16px Arial';ctx.fillText('🪙 '+COINS+' total',GCX,456);
     if(S.overLock<=0&&Math.sin(S.t*4)>-.3){ctx.fillStyle='#4ade80';ctx.font='bold 26px Arial';ctx.fillText('CLICK FOR REMATCH',GCX,520);}
+    return;
+  }
+  if(S.gameMode==='levels'&&S.levelsResult){
+    const r=S.levelsResult;
+    if(r.won){
+      if(Math.random()<.04)fireworksShow();
+      drawTrophy(GCX,250,150);
+      ctx.fillStyle='#38bdf8';ctx.font='italic bold 46px Arial';ctx.fillText('CAMPAIGN COMPLETE!',GCX,330);
+      ctx.fillStyle='#e2e8f0';ctx.font='bold 18px Arial';ctx.fillText('ALL '+LEVELS.length+' LEVELS CLEARED',GCX,366);
+    }else{
+      ctx.fillStyle='#f87171';ctx.font='italic bold 52px Arial';ctx.fillText('LEVEL FAILED',GCX,240);
+      ctx.fillStyle='#e2e8f0';ctx.font='bold 24px Arial';ctx.fillText('REACHED LEVEL '+(r.cleared+1)+' OF '+LEVELS.length,GCX,292);
+    }
+    ctx.fillStyle='#facc15';ctx.font='bold 22px Arial';ctx.fillText('🪙 '+COINS+' TOTAL COINS',GCX,412);
+    ctx.fillStyle='#94a3b8';ctx.font='16px Arial';ctx.fillText('LEVELS: '+LEVEL_BEST+'/'+LEVELS.length+' CLEARED',GCX,440);
+    if(S.overLock<=0&&Math.sin(S.t*4)>-.3){ctx.fillStyle='#4ade80';ctx.font='bold 26px Arial';ctx.fillText('CLICK TO PLAY AGAIN',GCX,520);}
     return;
   }
   if(S.gameMode==='royale'&&S.royaleResult){
@@ -1302,6 +1516,7 @@ function drawOver(){
       ctx.fillStyle='#94a3b8';ctx.font='17px Arial';ctx.fillText('The royale forgets no one. Especially not '+ord(r.place)+'.',GCX,328);
     }
     ctx.fillStyle='#f8fafc';ctx.font='bold 34px Arial';ctx.fillText(Math.round(S.score)+' pts',GCX,430);
+    ctx.fillStyle='#facc15';ctx.font='bold 16px Arial';ctx.fillText('🪙 '+COINS+' total',GCX,456);
     if(S.overLock<=0&&Math.sin(S.t*4)>-.3){ctx.fillStyle='#4ade80';ctx.font='bold 26px Arial';ctx.fillText('CLICK FOR REMATCH',GCX,520);}
     return;
   }
@@ -1318,12 +1533,13 @@ function drawOver(){
   ctx.fillStyle='#f8fafc';ctx.font='bold 40px Arial';ctx.fillText(Math.round(S.score),GCX,405);
   ctx.fillStyle='#94a3b8';ctx.font='17px Arial';
   ctx.fillText('SAVES: '+S.saves+'   •   MATCHES: '+S.matchIdx+'   •   BEST: '+S.best,GCX,438);
+  ctx.fillStyle='#facc15';ctx.font='bold 15px Arial';ctx.fillText('🪙 '+COINS+' total coins',GCX,460);
   if(Math.round(S.score)>=S.best&&S.score>0){
     ctx.fillStyle='#facc15';ctx.font='bold 22px Arial';
-    ctx.fillText('★ NEW BEST ★',GCX,472);
+    ctx.fillText('★ NEW BEST ★',GCX,486);
     if(Math.random()<.1)burst(GCX+rnd(-200,200),rnd(120,300),8,['#facc15','#fde047'],200);
   }
-  if(S.overLock<=0&&Math.sin(S.t*4)>-.3){ctx.fillStyle='#4ade80';ctx.font='bold 26px Arial';ctx.fillText('CLICK TO PLAY AGAIN',GCX,530);}
+  if(S.overLock<=0&&Math.sin(S.t*4)>-.3){ctx.fillStyle='#4ade80';ctx.font='bold 26px Arial';ctx.fillText('CLICK TO PLAY AGAIN',GCX,540);}
 }
 function drawCursor(){
   if(S.mode==='play')return;
@@ -1350,10 +1566,14 @@ setInterval(()=>{if(document.hidden)step(performance.now());},33);
 
 /* ---------- debug hooks ---------- */
 window.__sk={
-  info:()=>({mode:S.mode,sub:S.sub,gameMode:S.gameMode,match:S.matchIdx,round:S.R?S.R.round:0,place:S.royaleResult?S.royaleResult.place:0,duel:S.D?{stage:S.D.stage,my:S.D.myGoals,their:S.D.theirGoals,round:S.D.round,won:S.duelResult?S.duelResult.won:null}:0,score:Math.round(S.score),hp:S.hp,streak:S.streak,saves:S.saves,shot:S.shotIdx+'/'+S.shotsTotal,chaos:S.chaos,best:S.best}),
+  info:()=>({mode:S.mode,sub:S.sub,gameMode:S.gameMode,match:S.matchIdx,levelIdx:S.levelIdx,levels:S.levelsResult,round:S.R?S.R.round:0,place:S.royaleResult?S.royaleResult.place:0,duel:S.D?{stage:S.D.stage,my:S.D.myGoals,their:S.D.theirGoals,round:S.D.round,won:S.duelResult?S.duelResult.won:null}:0,score:Math.round(S.score),hp:S.hp,streak:S.streak,saves:S.saves,shot:S.shotIdx+'/'+S.shotsTotal,chaos:S.chaos,best:S.best,coins:COINS,owned:OWNED,equipped:EQUIPPED,levelBest:LEVEL_BEST,megaT:+S.megaT.toFixed(1),orb:!!S.orb}),
   start:()=>{if(S.mode==='title'||S.mode==='over'){S.overLock=0;startRun();}},
+  levels:()=>{if(S.mode==='title'||S.mode==='over'){S.overLock=0;startLevels();}},
   royale:()=>{if(S.mode==='title'||S.mode==='over'){S.overLock=0;startRoyale();}},
   duel:()=>{if(S.mode==='title'||S.mode==='over'){S.overLock=0;startDuel();}},
+  shop:()=>{S.mode='shop';return 'shop';},
+  addCoins:(n)=>{addCoins(n||1000);return COINS;},
+  buy:(id)=>{const skn=SKINS.find(s=>s.id===id);if(!skn)return 'no skin';if(!OWNED.includes(id)&&COINS>=skn.cost){COINS-=skn.cost;OWNED.push(id);saveOwned();try{localStorage.setItem('sk_coins',COINS);}catch(e){}}EQUIPPED=id;saveEquip();return EQUIPPED;},
   god:v=>{S.god=!!v;},
   autopick:v=>{S.autopick=!!v;},
   speed:v=>{S.debugTs=+v||1;},
